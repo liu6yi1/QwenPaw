@@ -16,6 +16,7 @@ from agentscope.tool import ToolChunk
 
 from ...config.context import get_current_workspace_dir
 from ...constant import WORKING_DIR
+from ...runtime.tool_registry import tool_descriptor
 from ..acp.tool_adapter import (
     format_close_response,
     format_final_assistant_response,
@@ -209,9 +210,11 @@ async def _set_runner_state_status(
 def _copy_content_text(blocks: list[TextBlock], limit: int = 12000) -> str:
     parts = [
         str(
-            block.get("text")
-            if isinstance(block, dict)
-            else getattr(block, "text", ""),
+            (
+                block.get("text")
+                if isinstance(block, dict)
+                else getattr(block, "text", "")
+            ),
         )
         for block in blocks
     ]
@@ -584,11 +587,15 @@ async def _stream_action_responses(
         ),
     )
     loop = asyncio.get_running_loop()
-    deadline = (
-        loop.time() + max_runtime
-        if max_runtime is not None and max_runtime > 0
-        else None
-    )
+    from ...tool_calls import get_call_context
+
+    _tc_ctx = get_call_context()
+    if _tc_ctx is not None and _tc_ctx.remaining() is not None:
+        deadline = _tc_ctx.deadline
+    elif max_runtime is not None and max_runtime > 0:
+        deadline = loop.time() + max_runtime
+    else:
+        deadline = None
 
     try:
         while True:
@@ -901,6 +908,7 @@ async def _run_streaming_agent_action(
         yield response_text(f"ACP execution error: {e}")
 
 
+@tool_descriptor(async_execution=True)
 async def delegate_external_agent(
     action: str,
     runner: str = "",

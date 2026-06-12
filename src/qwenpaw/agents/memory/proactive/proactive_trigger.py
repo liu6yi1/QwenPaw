@@ -61,7 +61,7 @@ async def _run_trigger_loop(
 async def is_last_message_proactive(workspace: Any) -> bool:
     """Check if the last message in session was a proactive message."""
     from agentscope.state import AgentState
-    from ....app.runner.utils import (
+    from ....app.chats.utils import (
         agentscope_msg_to_message,
         parse_legacy_memory_state,
     )
@@ -77,7 +77,7 @@ async def is_last_message_proactive(workspace: Any) -> bool:
         user_id = latest_session.user_id
         channel = latest_session.channel
 
-        state = await workspace.runner.session.get_session_state_dict(
+        state = await workspace.session.get_session_state_dict(
             session_id,
             user_id,
             channel,

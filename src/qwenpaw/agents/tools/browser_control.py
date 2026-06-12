@@ -38,6 +38,8 @@ from ...config import (
 )
 from ...config.context import get_current_workspace_dir
 from ...constant import WORKING_DIR, EnvVarLoader
+from ...exceptions import DirectUrlDownloadRejectedError
+from ...runtime.tool_registry import tool_descriptor
 
 from .browser_snapshot import build_role_snapshot_from_aria
 
@@ -103,21 +105,6 @@ def _safe_download_filename(filename: Any, default: str = "download") -> str:
     name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", name)
     name = name.strip(" .")
     return name or default
-
-
-class DirectUrlDownloadRejectedError(ValueError):
-    """Raised when direct URL download cannot be proven small enough."""
-
-    def __init__(
-        self,
-        reason: str,
-        content_length: int | None = None,
-        status: int | None = None,
-    ) -> None:
-        super().__init__(reason)
-        self.content_length = content_length
-        self.status = status
-        self.reason = reason
 
 
 def _browser_output_dir(state: dict, name: str) -> Path:
@@ -4013,9 +4000,11 @@ async def _action_connect_cdp(state: dict, cdp_url: str) -> ToolChunk:
     try:
         async_playwright = _ensure_playwright_async()
         pw = await async_playwright().start()
-        browser = await asyncio.wait_for(
+        from ...tool_calls import cancellable_wait
+
+        browser = await cancellable_wait(
             pw.chromium.connect_over_cdp(cdp_url),
-            timeout=_CDP_CONNECT_TIMEOUT_SECONDS,
+            fallback_secs=_CDP_CONNECT_TIMEOUT_SECONDS,
         )
         contexts = browser.contexts
         if contexts:
@@ -4159,6 +4148,7 @@ def _workspace_dir_key(workspace_dir: str | Path) -> str:
         return str(path.absolute())
 
 
+@tool_descriptor(async_execution=True)
 async def browser_use(  # pylint: disable=R0911,R0912
     action: str,
     url: str = "",

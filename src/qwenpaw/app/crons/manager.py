@@ -26,6 +26,7 @@ from .heartbeat import (
 )
 from .models import CronExecutionRecord, CronJobSpec, CronJobState
 from .repo.base import BaseJobRepository
+from ...api_action import ManagerBase, api_action
 
 HEARTBEAT_JOB_ID = "_heartbeat"
 DREAM_JOB_ID = "_dream"
@@ -39,23 +40,25 @@ class _Runtime:
     sem: asyncio.Semaphore
 
 
-class CronManager:
+class CronManager(ManagerBase):
+    endpoint_prefix = "crons"
+
     def __init__(
         self,
         *,
         repo: BaseJobRepository,
-        runner: Any,
+        workspace: Any,
         channel_manager: Any,
         timezone: str = "UTC",  # pylint: disable=redefined-outer-name
         agent_id: Optional[str] = None,
     ):
         self._repo = repo
-        self._runner = runner
+        self._workspace = workspace
         self._channel_manager = channel_manager
         self._agent_id = agent_id
         self._scheduler = AsyncIOScheduler(timezone=timezone)
         self._executor = CronExecutor(
-            runner=runner,
+            workspace=workspace,
             channel_manager=channel_manager,
         )
 
@@ -154,6 +157,12 @@ class CronManager:
 
     # ----- read/state -----
 
+    @api_action(
+        methods={"http", "cli", "slash"},
+        http_method="GET",
+        http_path="/crons/jobs",
+        slash_command="cron-list",
+    )
     async def list_jobs(self) -> list[CronJobSpec]:
         return await self._repo.list_jobs()
 
@@ -170,12 +179,25 @@ class CronManager:
 
     # ----- write/control -----
 
+    @api_action(
+        methods={"http", "cli", "slash"},
+        http_method="POST",
+        http_path="/crons/jobs",
+        request_model=CronJobSpec,
+        slash_command="cron-create",
+    )
     async def create_or_replace_job(self, spec: CronJobSpec) -> None:
         async with self._lock:
             await self._repo.upsert_job(spec)
             if self._started:
                 await self._register_or_update(spec)
 
+    @api_action(
+        methods={"http", "cli", "slash"},
+        http_method="DELETE",
+        http_path="/crons/jobs/{job_id}",
+        slash_command="cron-delete",
+    )
     async def delete_job(self, job_id: str) -> bool:
         async with self._lock:
             if self._started and self._scheduler.get_job(job_id):
@@ -466,13 +488,14 @@ class CronManager:
     async def _heartbeat_callback(self) -> None:
         """Run one heartbeat (HEARTBEAT.md as query, optional dispatch)."""
         try:
-            # Get workspace_dir from runner if available
-            workspace_dir = None
-            if hasattr(self._runner, "workspace_dir"):
-                workspace_dir = self._runner.workspace_dir
+            workspace_dir = getattr(
+                self._workspace,
+                "workspace_dir",
+                None,
+            )
 
             await run_heartbeat_once(
-                runner=self._runner,
+                workspace=self._workspace,
                 channel_manager=self._channel_manager,
                 agent_id=self._agent_id,
                 workspace_dir=workspace_dir,
@@ -486,8 +509,7 @@ class CronManager:
     async def _dream_callback(self) -> None:
         """Run one dream-based memory optimization task."""
         try:
-            # Run dream task
-            await self._runner.memory_manager.dream()
+            await self._workspace.memory_manager.dream()
             logger.debug("Dream task executed successfully")
         except asyncio.CancelledError:
             logger.info("Dream task was cancelled")

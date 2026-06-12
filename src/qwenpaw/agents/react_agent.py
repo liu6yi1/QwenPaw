@@ -3,6 +3,10 @@
 
 This module provides the main QwenPawAgent class built on ReActAgent,
 with integrated tools, skills, and memory management.
+
+Agent construction is fully delegated to :class:`AgentBuilder` — the
+agent accepts all dependencies (model, prompt, toolkit, middlewares)
+as constructor parameters and does not build them internally.
 """
 
 from __future__ import annotations
@@ -16,46 +20,9 @@ from agentscope.message import Msg, TextBlock
 from agentscope.state import AgentState
 from agentscope.tool import Toolkit
 
-from .command_handler import CommandHandler
-from .hooks import BootstrapHook
-from .middlewares import (
-    BootstrapMiddleware,
-    RequestSetupMiddleware,
-)
-from .model_factory import create_model_and_formatter
 from ..runtime import GuardedFunctionTool
-from .prompt import (
-    build_multimodal_hint,
-    build_system_prompt_from_working_dir,
-)
-from .skill_system import (
-    ensure_skills_initialized,
-    get_workspace_skills_dir,
-    resolve_effective_skills,
-)
-from .coding_mode_mixin import CodingModeMixin
-from .tools import (
-    browser_use,
-    delegate_external_agent,
-    chat_with_agent,
-    check_agent_task,
-    submit_to_agent,
-    desktop_screenshot,
-    edit_file,
-    execute_shell_command,
-    get_current_time,
-    get_token_usage,
-    glob_search,
-    grep_search,
-    list_agents,
-    materialize_skill,
-    read_file,
-    send_file_to_user,
-    set_user_timezone,
-    view_image,
-    view_video,
-    write_file,
-)
+from .skill_system import get_workspace_skills_dir
+from ..modes.coding import CodingModeMixin
 from ..constant import (
     MEDIA_UNSUPPORTED_PLACEHOLDER,
     WORKING_DIR,
@@ -78,125 +45,50 @@ class QwenPawAgent(CodingModeMixin, Agent):
     - Dynamic skill loading from working directory
     - Memory management with auto-compaction
     - Bootstrap guidance for first-time setup
-    - System command handling (/compact, /new, etc.)
     - Tool-guard security (via ``GuardedFunctionTool.check_permissions``)
     - Coding Mode features: Inline Diff (via CodingModeMixin)
     """
 
     def __init__(
         self,
+        *,
+        name: str,
+        model: Any,
+        system_prompt: str,
+        toolkit: Toolkit,
+        react_config: ReActConfig,
+        middlewares: list,
         agent_config: "AgentProfileConfig",
-        env_context: Optional[str] = None,
-        mcp_clients: Optional[List[Any]] = None,
-        memory_manager: BaseMemoryManager | None = None,
-        context_manager: BaseContextManager | None = None,
-        request_context: Optional[dict[str, str]] = None,
         workspace_dir: Path | None = None,
-        task_tracker: Any | None = None,
+        request_context: Optional[dict[str, str]] = None,
+        memory_manager: "BaseMemoryManager | None" = None,
+        context_manager: "BaseContextManager | None" = None,
+        mcp_clients: Optional[List[Any]] = None,
+        effective_skills: Optional[List[str]] = None,
     ):
         """Initialize QwenPawAgent.
 
-        Args:
-            agent_config: Agent profile configuration containing all settings
-                including running config (max_iters, max_input_length,
-                memory_compact_threshold, etc.) and language setting.
-            env_context: Optional environment context to prepend to
-                system prompt
-            mcp_clients: Optional list of MCP clients for tool
-                integration
-            memory_manager: Optional memory manager instance. Pass ``None``
-                to disable the memory manager entirely.
-            context_manager: Optional context manager instance
-            request_context: Optional request context with session_id,
-                user_id, channel, agent_id
-            workspace_dir: Workspace directory for reading prompt files
-                (if None, uses global WORKING_DIR)
+        All construction dependencies (model, prompt, toolkit, middlewares)
+        are provided externally by :class:`AgentBuilder`. The agent does
+        not build any of these internally.
         """
         self._agent_config = agent_config
-        self._env_context = env_context
         self._request_context = dict(request_context or {})
         self._mcp_clients = mcp_clients or []
         self._workspace_dir = workspace_dir
-        self._task_tracker = task_tracker
-
-        # Extract configuration from agent_config
-        running_config = agent_config.running
         self._language = agent_config.language
 
-        # Resolve effective skills once and share across toolkit /
-        # skill registration.
-        workspace_dir = self._workspace_dir or WORKING_DIR
-        ensure_skills_initialized(workspace_dir)
-        channel_name = self._request_context.get("channel", "console")
-        try:
-            effective_skills = resolve_effective_skills(
-                workspace_dir,
-                channel_name,
-            )
-        except Exception:  # pylint: disable=broad-except
-            effective_skills = []
+        # Register skills metadata on toolkit
+        self._register_skills(toolkit, effective_skills=effective_skills or [])
 
-        # Initialize toolkit with built-in tools
-        toolkit = self._create_toolkit(
-            effective_skills=effective_skills,
-        )
-
-        # Load and register skills
-        self._register_skills(toolkit, effective_skills=effective_skills)
-
-        # Initialize memory_manager and context_manager for use
-        # in _build_sys_prompt
+        # Store managers for downstream consumers
         self.memory_manager = memory_manager
         self.context_manager = context_manager
 
-        # Build system prompt
-        sys_prompt = self._build_sys_prompt()
-
-        # Create model and formatter using factory method
-        model, formatter = create_model_and_formatter(agent_id=agent_config.id)
-        model_info = (
-            f"{agent_config.active_model.provider_id}/"
-            f"{agent_config.active_model.model}"
-            if agent_config.active_model
-            else "global-fallback"
-        )
-        logger.info(
-            f"Agent '{agent_config.id}' initialized with model: "
-            f"{model_info} (class: {model.__class__.__name__})",
-        )
-        # Attach the custom formatter to the innermost model so it
-        # overrides agentscope's default formatter.
-        if formatter is not None:
-            innermost = model
-            while hasattr(innermost, "_inner"):
-                innermost = innermost._inner
-            while hasattr(innermost, "_model"):
-                innermost = innermost._model
-            if hasattr(innermost, "formatter"):
-                innermost.formatter = formatter
-        middlewares = self._build_middlewares()
-        init_kwargs: dict[str, Any] = {
-            "name": agent_config.name or "QwenPaw",
-            "model": model,
-            "system_prompt": sys_prompt,
-            "toolkit": toolkit,
-            "react_config": ReActConfig(max_iters=running_config.max_iters),
-            "middlewares": middlewares,
-        }
-        super().__init__(**init_kwargs)
-
-        # Bypass agentscope's built-in permission engine — qwenpaw uses
-        # its own GuardedFunctionTool.check_permissions for tool-guard.
-        # Without this, MCP tools (which have no check_permissions override)
-        # fall through to the default "ask" behavior, blocking execution.
-        from agentscope.permission import PermissionMode
-
-        self.state.permission_context.mode = PermissionMode.BYPASS
-
-        # Register memory tools provided by the memory manager
+        # Register memory tools into toolkit
         if self.memory_manager is not None:
             memory_tools = self.memory_manager.list_memory_tools()
-            basic_group = self.toolkit.tool_groups[0]
+            basic_group = toolkit.tool_groups[0]
             for tool_fn in memory_tools:
                 basic_group.tools.append(
                     GuardedFunctionTool(
@@ -210,21 +102,25 @@ class QwenPawAgent(CodingModeMixin, Agent):
                 [fn.__name__ for fn in memory_tools],
             )
 
-        # Tombstone for legacy ``getattr(agent, "memory", None)`` callers;
-        # short-term memory itself lives on ``self.state.context``.
+        super().__init__(
+            name=name,
+            model=model,
+            system_prompt=system_prompt,
+            toolkit=toolkit,
+            react_config=react_config,
+            middlewares=middlewares,
+        )
+
+        # Bypass agentscope's built-in permission engine — qwenpaw uses
+        # its own GuardedFunctionTool.check_permissions for tool-guard.
+        from agentscope.permission import PermissionMode
+
+        self.state.permission_context.mode = PermissionMode.BYPASS
+
+        # Tombstone for legacy ``getattr(agent, "memory", None)`` callers
         self.memory = None  # type: ignore[assignment]
 
-        # ``context_manager`` is required: it owns the dialog-path
-        # resolution and the post_acting tool-result pruning hook.
-        if self.context_manager is not None:
-            self.command_handler = CommandHandler(
-                agent_name=self.name,
-                agent=self,
-                memory_manager=self.memory_manager,
-                context_manager=self.context_manager,
-            )
-        else:
-            self.command_handler = None
+        self._register_tool_call_hooks()
 
     # Session persistence calls state_dict/load_state_dict on the agent;
     # these round-trip through self.state (AgentState pydantic model).
@@ -263,7 +159,7 @@ class QwenPawAgent(CodingModeMixin, Agent):
         # --- 1.x legacy format: migrate ``memory`` → ``state`` ---
         memory_raw = state_dict.get("memory")
         if isinstance(memory_raw, dict):
-            from qwenpaw.app.runner.utils import parse_legacy_memory_state
+            from qwenpaw.app.chats.utils import parse_legacy_memory_state
 
             msgs, summary = parse_legacy_memory_state(memory_raw)
             self.state = AgentState()
@@ -280,120 +176,6 @@ class QwenPawAgent(CodingModeMixin, Agent):
             raise KeyError(
                 "state_dict has neither 'state' nor 'memory' key",
             )
-
-    def _create_toolkit(
-        self,
-        effective_skills: list[str] | None = None,
-    ) -> Toolkit:
-        """Create and populate toolkit with built-in tools.
-
-        Collects all enabled tool functions, wraps them in ``FunctionTool``
-        (or ``GuardedFunctionTool`` when ``agent_id`` is set), and passes
-        the list to ``Toolkit(tools=[...])`` at construction time.
-        """
-        effective_skills = effective_skills or []
-        agent_id = self._agent_config.id
-
-        # Check which tools are enabled from agent config
-        enabled_tools: dict[str, bool] = {}
-        try:
-            if hasattr(self._agent_config, "tools") and hasattr(
-                self._agent_config.tools,
-                "builtin_tools",
-            ):
-                builtin_tools = self._agent_config.tools.builtin_tools
-                enabled_tools = {
-                    name: tool.enabled for name, tool in builtin_tools.items()
-                }
-        except Exception as e:
-            logger.warning(
-                f"Failed to load agent tools config: {e}, "
-                "all tools will be disabled",
-            )
-
-        # Map of tool functions (hardcoded builtin tools)
-        tool_functions: dict[str, Any] = {
-            "execute_shell_command": execute_shell_command,
-            "read_file": read_file,
-            "write_file": write_file,
-            "edit_file": edit_file,
-            "grep_search": grep_search,
-            "glob_search": glob_search,
-            "browser_use": browser_use,
-            "desktop_screenshot": desktop_screenshot,
-            "view_image": view_image,
-            "view_video": view_video,
-            "send_file_to_user": send_file_to_user,
-            "get_current_time": get_current_time,
-            "set_user_timezone": set_user_timezone,
-            "get_token_usage": get_token_usage,
-            "delegate_external_agent": delegate_external_agent,
-            "list_agents": list_agents,
-            "chat_with_agent": chat_with_agent,
-            "submit_to_agent": submit_to_agent,
-            "check_agent_task": check_agent_task,
-            **(
-                {"materialize_skill": materialize_skill}
-                if "make-skill" in effective_skills
-                else {}
-            ),
-        }
-
-        hardcoded_builtin_tools = set(tool_functions.keys())
-
-        # Dynamically load plugin-registered tools
-        from . import tools as tools_module
-
-        plugin_tools = set()
-        for tool_name in getattr(tools_module, "__all__", []):
-            if tool_name not in tool_functions:
-                tool_func = getattr(tools_module, tool_name, None)
-                if callable(tool_func):
-                    tool_functions[tool_name] = tool_func
-                    plugin_tools.add(tool_name)
-                    logger.debug(
-                        "Discovered plugin tool: %s",
-                        tool_name,
-                    )
-
-        # Build FunctionTool / GuardedFunctionTool instances
-        tool_instances = []
-        for tool_name, tool_func in tool_functions.items():
-            if tool_name in plugin_tools:
-                if tool_name not in enabled_tools:
-                    logger.debug(
-                        "Skipped unconfigured plugin tool: %s",
-                        tool_name,
-                    )
-                    continue
-
-            if not enabled_tools.get(
-                tool_name,
-                tool_name in hardcoded_builtin_tools,
-            ):
-                logger.debug("Skipped disabled tool: %s", tool_name)
-                continue
-
-            tool_instances.append(
-                GuardedFunctionTool(
-                    tool_func,
-                    agent_id=agent_id,
-                    request_context=self._request_context,
-                ),
-            )
-            logger.debug("Registered tool: %s", tool_name)
-
-        # Coding Mode tools (lsp, ast_search)
-        try:
-            coding_tools = self._collect_coding_mode_tools(
-                agent_id=agent_id,
-                request_context=self._request_context,
-            )
-            tool_instances.extend(coding_tools)
-        except Exception as e:  # pylint: disable=broad-except
-            logger.warning(f"Failed to register Coding Mode tools: {e}")
-
-        return Toolkit(tools=tool_instances, mcps=self._mcp_clients or None)
 
     def _register_skills(
         self,
@@ -425,94 +207,6 @@ class QwenPawAgent(CodingModeMixin, Agent):
                         skill_name,
                         e,
                     )
-
-    def _build_sys_prompt(self) -> str:
-        """Build system prompt from working dir files and env context.
-
-        Returns:
-            Complete system prompt string
-        """
-        # Get agent_id from request_context
-        agent_id = (
-            self._request_context.get("agent_id")
-            if self._request_context
-            else None
-        )
-
-        # Check if heartbeat is enabled in agent config
-        heartbeat_enabled = False
-        if (
-            hasattr(self._agent_config, "heartbeat")
-            and self._agent_config.heartbeat is not None
-        ):
-            heartbeat_enabled = self._agent_config.heartbeat.enabled
-
-        sys_prompt = build_system_prompt_from_working_dir(
-            working_dir=self._workspace_dir,
-            agent_id=agent_id,
-            heartbeat_enabled=heartbeat_enabled,
-            language=self._language,
-            memory_manager=self.memory_manager,
-        )
-        logger.debug("System prompt:\n%s...", sys_prompt[:100])
-
-        # Inject multimodal capability awareness
-        multimodal_hint = build_multimodal_hint()
-        if multimodal_hint:
-            sys_prompt = sys_prompt + "\n\n" + multimodal_hint
-
-        if self._env_context is not None:
-            sys_prompt = sys_prompt + "\n\n" + self._env_context
-
-        return sys_prompt
-
-    def _build_middlewares(self) -> list:
-        """Build the middleware list for the agent constructor."""
-        working_dir = (
-            self._workspace_dir if self._workspace_dir else WORKING_DIR
-        )
-        bootstrap_hook = BootstrapHook(
-            working_dir=working_dir,
-            language=self._language,
-        )
-        mws: list = [
-            # First: per-reply ContextVars + file/media block download +
-            # skill env wrap.  Replaces ``QwenPawAgent.reply()`` pre-
-            # processing so both ``reply()`` and ``reply_stream()`` get
-            # the same setup (5 ContextVars + process_file_and_media_blocks +
-            # apply_skill_config_env_overrides).
-            RequestSetupMiddleware(
-                workspace_dir=self._workspace_dir,
-                agent_id=self._agent_config.id,
-                agent_config=self._agent_config,
-                request_context=self._request_context,
-            ),
-            BootstrapMiddleware(bootstrap_hook),
-        ]
-        if self.context_manager is not None:
-            # ``BaseContextManager`` itself inherits from
-            # ``MiddlewareBase`` — no wrapper needed.
-            mws.append(self.context_manager)
-        logger.debug("Built %d middleware(s)", len(mws))
-        return mws
-
-    def rebuild_sys_prompt(self) -> None:
-        """Rebuild and replace the system prompt.
-
-        Useful after load_session_state to ensure the prompt reflects
-        the latest AGENTS.md / SOUL.md / PROFILE.md on disk.
-
-        Updates both self._system_prompt and the first system-role
-        message stored in ``self.state.context`` (if one exists).
-        """
-        self._system_prompt = self._build_sys_prompt()
-
-        for msg in self.state.context:
-            if msg.role == "system":
-                msg.content = [
-                    TextBlock(type="text", text=self._system_prompt),
-                ]
-            break
 
     # ------------------------------------------------------------------
     # Media-block fallback: strip unsupported media blocks (image, audio,
@@ -784,6 +478,86 @@ class QwenPawAgent(CodingModeMixin, Agent):
             mt = getattr(source, "media_type", "") or ""
             return mt.startswith(self._MEDIA_MIME_PREFIXES)
         return False
+
+    # ------------------------------------------------------------------
+    # Tool call enhancement: hint injection + hook registration
+    # ------------------------------------------------------------------
+
+    def _get_tool_coordinator(self) -> Any:
+        """Return the ToolCoordinator from request_context, or None."""
+        return (self._request_context or {}).get("tool_coordinator")
+
+    async def _inject_pending_hints(self) -> None:
+        """Pop background-tool hints and append them to agent context."""
+        mgr = self._get_tool_coordinator()
+        if mgr is None:
+            return
+        session_id = (self._request_context or {}).get("session_id", "")
+        if not session_id:
+            return
+        hints = await mgr.pop_pending_hints(session_id)
+        for hint in hints:
+            self.state.context.append(hint)
+
+    async def _reply(self, **kwargs: Any) -> Any:
+        """Override to inject pending background-tool hints before reply."""
+        await self._inject_pending_hints()
+        async for evt in super()._reply(**kwargs):
+            yield evt
+
+    def _register_tool_call_hooks(self) -> None:
+        """Register per-tool default timeouts on the ToolCoordinator."""
+        mgr = self._get_tool_coordinator()
+        if mgr is None:
+            return
+
+        mgr.hooks.register(
+            "execute_shell_command",
+            default_timeout_secs=60.0,
+        )
+        mgr.hooks.register("chat_with_agent", default_timeout_secs=300.0)
+        mgr.hooks.register("check_agent_task", default_timeout_secs=30.0)
+        mgr.hooks.register("grep_search", default_timeout_secs=30.0)
+        mgr.hooks.register("glob_search", default_timeout_secs=15.0)
+        mgr.hooks.register("ast_search", default_timeout_secs=35.0)
+        mgr.hooks.register(
+            "desktop_screenshot",
+            default_timeout_secs=30.0,
+        )
+        for name in (
+            "lsp_definition",
+            "lsp_references",
+            "lsp_rename",
+            "lsp_hover",
+            "lsp_diagnostics",
+        ):
+            mgr.hooks.register(name, default_timeout_secs=20.0)
+        mgr.hooks.register(
+            "browser_use",
+            max_internal_timeout_secs=3600.0,
+        )
+
+        agent_id = (self._request_context or {}).get(
+            "agent_id",
+            self.name,
+        )
+        mgr.clear_agent_tool_timeouts(agent_id)
+        builtin_tools = (
+            getattr(
+                getattr(self._agent_config, "tools", None),
+                "builtin_tools",
+                None,
+            )
+            or {}
+        )
+        for tool_name, cfg in builtin_tools.items():
+            t = getattr(cfg, "timeout_seconds", None)
+            if t is not None and t > 0:
+                mgr.set_agent_tool_timeout(
+                    agent_id,
+                    tool_name,
+                    float(t),
+                )
 
     # pylint: disable=too-many-nested-blocks
     def _strip_media_blocks_from_memory(self) -> int:

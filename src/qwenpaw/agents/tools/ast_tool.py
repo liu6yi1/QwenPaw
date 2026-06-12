@@ -10,6 +10,7 @@ apply a rewrite it must read matches first and then call ``edit_file``
 for each location.  This keeps the diff / approval / undo path on a
 single ``edit_file`` entry-point (see PROPOSAL §四 of the design doc).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +27,7 @@ from agentscope.message import ToolResultState
 
 from ...config.context import get_current_workspace_dir
 from ...constant import WORKING_DIR
+from ...runtime.tool_registry import tool_descriptor
 from .file_io import _resolve_file_path
 
 # ---------------------------------------------------------------------
@@ -214,6 +216,10 @@ def _format_matches(
 # ---------------------------------------------------------------------
 
 
+@tool_descriptor(
+    requires_modes=("coding",),
+    requires_sandbox=("file_read",),
+)
 async def ast_search(  # pylint: disable=too-many-return-statements
     pattern: str,
     language: str,
@@ -275,11 +281,13 @@ async def ast_search(  # pylint: disable=too-many-return-statements
     ]
 
     try:
-        returncode, stdout, stderr = await asyncio.wait_for(
+        from ...tool_calls import cancellable_wait
+
+        returncode, stdout, stderr = await cancellable_wait(
             asyncio.to_thread(_run_ast_grep_sync, args, root),
-            timeout=_AST_GREP_TIMEOUT + 5,
+            fallback_secs=_AST_GREP_TIMEOUT + 5,
         )
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         return _make_response(
             f"Error: ast_search timed out after {_AST_GREP_TIMEOUT}s. "
             f"Try a narrower `path` or a more specific pattern.",

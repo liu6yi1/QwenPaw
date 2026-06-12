@@ -18,6 +18,7 @@ from agentscope.message import ToolResultState
 
 from ...constant import WORKING_DIR
 from ...config.context import get_current_workspace_dir
+from ...runtime.tool_registry import tool_descriptor
 from .file_io import _resolve_file_path
 
 # ---------------------------------------------------------------------------
@@ -480,6 +481,7 @@ def _walk_and_glob(
 # ---------------------------------------------------------------------------
 
 
+@tool_descriptor(requires_sandbox=("file_read",), async_execution=True)
 async def grep_search(
     pattern: str,
     path: Optional[str] = None,
@@ -539,11 +541,13 @@ async def grep_search(
             return [], f"error: {exc}"
 
     try:
-        match_lines, status = await asyncio.wait_for(
+        from ...tool_calls import cancellable_wait
+
+        match_lines, status = await cancellable_wait(
             asyncio.to_thread(_worker),
-            timeout=_GREP_TIMEOUT,
+            fallback_secs=_GREP_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         cancel.set()
         await asyncio.sleep(0.05)
         return _make_response(
@@ -581,6 +585,7 @@ async def grep_search(
     return _make_response(result)
 
 
+@tool_descriptor(requires_sandbox=("file_read",), async_execution=True)
 async def glob_search(
     pattern: str,
     path: Optional[str] = None,
@@ -611,11 +616,13 @@ async def glob_search(
             return [], False
 
     try:
-        results, truncated = await asyncio.wait_for(
+        from ...tool_calls import cancellable_wait
+
+        results, truncated = await cancellable_wait(
             asyncio.to_thread(_worker),
-            timeout=_GLOB_TIMEOUT,
+            fallback_secs=_GLOB_TIMEOUT,
         )
-    except asyncio.TimeoutError:
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         cancel.set()
         await asyncio.sleep(0.05)
         return _make_response(

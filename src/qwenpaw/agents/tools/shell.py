@@ -24,6 +24,7 @@ from ...config.context import (
     get_current_shell_command_timeout,
     get_current_workspace_dir,
 )
+from ...runtime.tool_registry import tool_descriptor
 
 
 def _kill_process_tree_win32(pid: int) -> None:
@@ -360,6 +361,7 @@ def _execute_subprocess_sync(
 
 
 # pylint: disable=too-many-branches, too-many-statements
+@tool_descriptor(requires_sandbox=("shell_exec",), async_execution=True)
 async def execute_shell_command(
     command: str,
     timeout: float = 60.0,
@@ -454,15 +456,17 @@ async def execute_shell_command(
             try:
                 # Apply timeout to communicate directly; wait()+communicate()
                 # can hang if descendants keep stdout/stderr pipes open.
-                stdout, stderr = await asyncio.wait_for(
+                from ...tool_calls import cancellable_wait
+
+                stdout, stderr = await cancellable_wait(
                     proc.communicate(),
-                    timeout=timeout,
+                    fallback_secs=timeout,
                 )
                 stdout_str = smart_decode(stdout)
                 stderr_str = smart_decode(stderr)
                 returncode = proc.returncode
 
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, asyncio.CancelledError):
                 stderr_suffix = (
                     f"⚠️ TimeoutError: The command execution exceeded "
                     f"the timeout of {timeout} seconds. "

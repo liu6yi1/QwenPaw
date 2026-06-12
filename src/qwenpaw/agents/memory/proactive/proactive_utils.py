@@ -122,10 +122,10 @@ async def _process_session_memory(
 ) -> List[dict]:
     """Process a session's memory and return a list of messages."""
     from agentscope.state import AgentState
-    from ....app.runner.utils import parse_legacy_memory_state
+    from ....app.chats.utils import parse_legacy_memory_state
 
     try:
-        state = await workspace.runner.session.get_session_state_dict(
+        state = await workspace.session.get_session_state_dict(
             session_id,
             user_id,
             channel,
