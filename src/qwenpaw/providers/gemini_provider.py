@@ -13,6 +13,7 @@ from agentscope.model import ChatModelBase
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types as genai_types
+from pydantic import Field
 
 from qwenpaw.providers.multimodal_prober import (
     ProbeResult,
@@ -23,6 +24,8 @@ from qwenpaw.providers.multimodal_prober import (
     evaluate_image_probe_answer,
 )
 from qwenpaw.providers.provider import ModelInfo, Provider
+from .capping_formatter import _CappingGeminiFormatter
+from .capping_formatter import MAX_INLINE_MEDIA_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +139,18 @@ def _sanitize_schema_for_gemini(schema: Any) -> Any:
 
 class GeminiProvider(Provider):
     """Provider implementation for Google Gemini API."""
+
+    max_inline_media_bytes: int = Field(
+        default=MAX_INLINE_MEDIA_BYTES,
+        ge=0,
+        description=(
+            "Maximum size (in bytes) of a local media file inlined as "
+            "base64 into the model request body. Media above this is "
+            "replaced with a text placeholder to avoid oversized requests "
+            "when large files (e.g. generated videos) persist in "
+            "conversation history. 0 disables capping."
+        ),
+    )
 
     def _build_default_headers(self) -> dict:
         return dict(self.custom_headers) if self.custom_headers else {}
@@ -291,6 +306,9 @@ class GeminiProvider(Provider):
             default_headers=headers or None,
             extra_config_kwargs=gen_kwargs or None,
             context_size=self._get_context_size(model_id),
+            formatter=_CappingGeminiFormatter(
+                max_bytes=self.max_inline_media_bytes,
+            ),
         )
 
     async def probe_model_multimodal(
