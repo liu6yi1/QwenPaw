@@ -95,7 +95,7 @@ def test_state_dict_carries_the_scroll_bookkeeping(store):
 def test_resume_after_crash_does_not_reappend(store):
     """Full cycle: persist → snapshot → JSON round-trip (the "crash") →
     rebuild a fresh agent+manager → the restored window is recognized as
-    already durable, so the next write-through appends nothing."""
+    already durable, so the next write-through appends nothing."""."""
     agent1, mgr1 = _seed_session(store)
     assert store.count("s1") == 3
     snapshot = json.loads(json.dumps(QwenPawAgent.state_dict(agent1)))

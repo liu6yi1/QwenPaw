@@ -311,7 +311,7 @@ class EvictionIndex:
 
     def describe(self) -> str:
         """The tier/span map without the ``render`` preamble — for the
-        user-facing ``/compact`` reply. Empty string if nothing is indexed."""
+        user-facing ``/compact`` reply. Empty string if nothing is indexed.""" ""
         return "\n".join(self._tier_lines())
 
     def _tier_lines(self) -> list[str]:

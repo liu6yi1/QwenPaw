@@ -709,7 +709,7 @@ async def test_unheadlined_span_tiled_into_multiple_headlines(
 async def test_skipped_section_keeps_extractive_fallback(store: HistoryStore):
     """A section the model omits is still labelled — the harness fills it with
     an extractive fallback drawn from that section's own text, never
-    ``(no milestone)`` for a section that had content."""
+    ``(no milestone)`` for a section that had content.""" ""
     ctx = [
         user("distinctive-billing-question"),
         assistant("answered billing"),  # NO headline
@@ -772,7 +772,7 @@ async def test_unheadlined_span_falls_back_when_summary_fails(
     store: HistoryStore,
 ):
     """A model/timeout error must never abort eviction — the span keeps the
-    ``(no milestone)`` marker and the evicted count is unaffected."""
+    ``(no milestone)`` marker and the evicted count is unaffected.""" ""
     ctx = [
         user("old thing"),
         assistant("did old thing"),  # NO headline

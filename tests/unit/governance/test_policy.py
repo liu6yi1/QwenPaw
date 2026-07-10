@@ -236,7 +236,7 @@ class TestDefaultPolicyLoad:
     def test_coding_project_dir_roundtrip_portable(self, tmp_path):
         """save→reload keeps the CODING_PROJECT_DIR placeholder in YAML
         (distinct coding dir), so the policy stays portable across
-        machines and the coding dir remains ALLOWed after reload."""
+        machines and the coding dir remains ALLOWed after reload.""" ""
         ws = "/home/user/workspace"
         cpd = "/home/user/coding"
         policy_dir = tmp_path / "policy"
@@ -641,7 +641,7 @@ class TestAssertPolicySandboxEscalation:
 
 class TestBuiltinRulePriority:
     """Builtin rules have higher priority than user_rules — even an explicit
-    DENY rule in user_rules cannot override a builtin ASK."""
+    DENY rule in user_rules cannot override a builtin ASK.""" ""
 
     @pytest.fixture()
     def governor_with_deny(self, tmp_path):
@@ -1024,7 +1024,7 @@ class TestAddApprovedRuleGeneralization:
 
     async def test_missing_generalized_target_raises(self, governor):
         """The keyword arg is required — calling without it is a TypeError,
-        not a silent skip. This guards the tool_adapter call site."""
+        not a silent skip. This guards the tool_adapter call site.""" ""
         with pytest.raises(TypeError):
             await governor.add_approved_rule(_tc("Bash", "git status"))
 

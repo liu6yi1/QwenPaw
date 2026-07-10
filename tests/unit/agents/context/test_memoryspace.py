@@ -428,7 +428,7 @@ def test_like_fallback_emits_degradation_notice(ms: MemorySpace):
 
 def test_no_notice_when_fts_available(ms: MemorySpace):
     """The notice is FTS-unavailable-only — a normal FTS build never sees it,
-    even when a query degrades to LIKE for lack of word tokens."""
+    even when a query degrades to LIKE for lack of word tokens.""" ""
     # All-punctuation query falls back to LIKE, but FTS5 *is* available here.
     rows = ms.search("!!!")
     assert all(r["kind"] != "_notice" for r in rows)

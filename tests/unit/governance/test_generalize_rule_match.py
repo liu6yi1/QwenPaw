@@ -667,7 +667,7 @@ class TestDisableThinkingForwarding:
 
 def _compat_instance(cls):
     """Construct a compat instance bypassing ``__init__`` — the translation
-    methods don't touch instance state beyond what they're given."""
+    methods don't touch instance state beyond what they're given.""" ""
     return object.__new__(cls)
 
 

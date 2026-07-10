@@ -138,7 +138,7 @@ async def test_request_approval_missing_session_id_raises_approval_required(
     svc: ApprovalService,
 ):
     """Without a session_id the gate cannot route the pending — it must
-    fail fast with ApprovalRequiredError and never touch the service."""
+    fail fast with ApprovalRequiredError and never touch the service.""" ""
     gate = QwenPawDriverApprovalGate()
     ctx = _ctx(session_id="")
     with pytest.raises(ApprovalRequiredError):

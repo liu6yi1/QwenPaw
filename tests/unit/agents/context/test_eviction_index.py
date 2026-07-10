@@ -55,7 +55,7 @@ def test_render_closes_with_live_turn_banner():
 
 def test_describe_omits_the_model_facing_banner():
     """``describe()`` feeds the user-facing /compact reply — it should show the
-    tier/span map only, not the model-only 'answer THIS' banner."""
+    tier/span map only, not the model-only 'answer THIS' banner.""" ""
     idx = EvictionIndex(session_id="s")
     _add(idx, 5, "old headline")
     described = idx.describe()
