@@ -220,7 +220,7 @@ async def test_list_events_handles_malformed_json(
 ):
     """Genuinely malformed JSON → caught by the except branch, returns [],
     and logs a warning (so permission/disk errors aren't silently
-    swallowed). Regression for the #5809 review feedback."""
+    swallowed). Regression for the #5809 review feedback.""" ""
     inbox_path.write_text("{bad", encoding="utf-8")
     with caplog.at_level("WARNING"):
         events = await inbox_store.list_events()

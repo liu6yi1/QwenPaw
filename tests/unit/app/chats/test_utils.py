@@ -126,7 +126,7 @@ def test_clean_display_text_strips_both_skill_and_headline():
 
 def test_msg_to_message_hides_headline_in_history_path():
     """Regression: the GET /chats/{id} path now strips the ⟦…⟧ headline, so it
-    no longer reappears after navigating away from the chat and back."""
+    no longer reappears after navigating away from the chat and back."""ck."""
     msg = Msg(
         name="assistant",
         role="assistant",

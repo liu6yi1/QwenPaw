@@ -79,7 +79,7 @@ class TestResolveRequestStashesScope:
 
     async def test_none_scope_defaults_to_exact_downstream(self):
         """No scope passed (IM channels / CLI) → scope stays None; the
-        consumer treats None as EXACT. Pending is still resolved."""
+        consumer treats None as EXACT. Pending is still resolved.""" ""
         svc = ApprovalService()
         pending = _make_pending()
         svc._pending[pending.request_id] = pending
